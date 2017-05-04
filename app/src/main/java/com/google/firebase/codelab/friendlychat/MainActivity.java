@@ -49,10 +49,12 @@ import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 
 import de.hdodenhof.circleimageview.CircleImageView;
 
@@ -163,19 +165,28 @@ public class MainActivity extends AppCompatActivity
             }
         });
 
+        // DONE: 채팅 입력하기. Firebase DB에 데이터 전송 - Update by devming
         mSendButton = (Button) findViewById(R.id.sendButton);
         mSendButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                // Send messages on click.
+                // 전송할 메시지 Setting
+                FriendlyMessage friendlyMessage = new FriendlyMessage(mMessageEditText.getText().toString(), mUsername, mPhotoUrl, null /* no image */);
+                // 전송(push)
+                mFirebaseDatabaseReference.child(MESSAGES_CHILD).push().setValue(friendlyMessage);
+                mMessageEditText.setText("");
             }
         });
 
+        // DONE: 이미지 선택하기. onActivityResult 메소드에 이미지 전송 기능 있음 - Update by devming
         mAddMessageImageView = (ImageView) findViewById(R.id.addMessageImageView);
         mAddMessageImageView.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                // Select image for image message on click.
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("image/*");
+                startActivityForResult(intent, REQUEST_IMAGE);
             }
         });
 
@@ -313,5 +324,55 @@ public class MainActivity extends AppCompatActivity
         // be available.
         Log.d(TAG, "onConnectionFailed:" + connectionResult);
         Toast.makeText(this, "Google Play Services error.", Toast.LENGTH_SHORT).show();
+    }
+
+    // DONE: Firebase Realtime DB에 이미지 저장하기 - Update by devming
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        Log.d(TAG, "onActivityResult: requestCode=" + requestCode + ", resultCode=" + resultCode);
+
+        if(requestCode == REQUEST_IMAGE) {
+            if(resultCode == RESULT_OK) {
+                if(data != null) {
+                    final Uri uri = data.getData();
+                    Log.d(TAG, "Uri: " + uri.toString());
+
+                    FriendlyMessage tempMessage = new FriendlyMessage(null, mUsername, mPhotoUrl, LOADING_IMAGE_URL);
+                    mFirebaseDatabaseReference.child(MESSAGES_CHILD).push().setValue(tempMessage, new DatabaseReference.CompletionListener() {
+
+                        @Override
+                        public void onComplete(DatabaseError databaseError, DatabaseReference databaseReference) {
+                            if(databaseError == null) {
+                                String key = databaseReference.getKey();
+                                StorageReference storageReference = FirebaseStorage.getInstance().getReference(mFirebaseUser.getUid())
+                                                                                .child(key)
+                                                                                .child(uri.getLastPathSegment());
+
+                                putImageInStorage(storageReference, uri, key);
+                            } else {
+                                Log.w(TAG, "Unable to write message to database.", databaseError.toException());
+                            }
+                        }
+                    });
+                } // data != null
+            } // resultCode == RESULT_OK
+        } // requestCode == REQUEST_IMAGE
+
+    }
+
+    private void putImageInStorage(StorageReference storageReference, Uri uri, final String key) {
+        storageReference.putFile(uri).addOnCompleteListener(MainActivity.this,
+                new OnCompleteListener<UploadTask.TaskSnapshot>() {
+                    @Override
+                    public void onComplete(@NonNull Task<UploadTask.TaskSnapshot> task) {
+                        if(task.isSuccessful()) {
+                            FriendlyMessage friendlyMessage = new FriendlyMessage(null, mUsername, mPhotoUrl, task.getResult().getMetadata().getDownloadUrl().toString());
+                            mFirebaseDatabaseReference.child(MESSAGES_CHILD).child(key).setValue(friendlyMessage);
+                        } else {
+                            Log.w(TAG, "Image upload task was not successful.");
+                        }
+                    }
+                });
     }
 }
